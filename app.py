@@ -1,50 +1,49 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import FileResponse
-import shutil
+from fastapi import FastAPI, Body
+from fastapi.middleware.cors import CORSMiddleware
+import base64
+from io import BytesIO
 import os
-import zipfile
 import uuid
-from generator import generate_info_cards
+from generator import generate_info_cards  # 你原来的生成函数
 
 app = FastAPI()
 
-# 根路径，避免 404 错误
+# 允许跨域，确保 Dify 可以访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/")
-def read_root():
-    return {"message": "Welcome to the API. Use /process to upload files."}
+def root():
+    return {"message": "Welcome to the API. Use /process_base64 to submit base64 Excel."}
 
-@app.post("/process")
-async def process_excel(file: UploadFile = File(...)):
+@app.post("/process_base64")
+async def process_excel_base64(file_base64: str = Body(...)):
+    # 创建临时目录
     temp_id = str(uuid.uuid4())
-    # 使用系统临时目录
-    input_path = f"/tmp/{temp_id}.xlsx"
-    output_folder = f"/tmp/{temp_id}_out"
-    zip_path = f"/tmp/{temp_id}.zip"
+    temp_input_path = f"/tmp/{temp_id}.xlsx"
+    output_dir = f"/tmp/{temp_id}_out"
+    os.makedirs(output_dir, exist_ok=True)
 
-    # 保存上传的文件
-    with open(input_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    # 将 base64 保存为文件
+    with open(temp_input_path, "wb") as f:
+        f.write(base64.b64decode(file_base64))
 
-    # 生成处理后的文件
-    result_files = generate_info_cards(input_path, output_folder)
+    # 调用你原来的图片生成函数
+    result_files = generate_info_cards(temp_input_path, output_dir)
 
-    # 压缩结果文件
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for file_path in result_files:
-            if os.path.exists(file_path):
-                zipf.write(file_path, arcname=os.path.basename(file_path))
+    # 假设你返回的 result_files 是文件路径列表，转为下载链接（你可以加 CDN 或改成别的格式）
+    result_urls = [f"https://info-card-generator.onrender.com/files/{os.path.basename(f)}" for f in result_files]
 
-    return {"download_url": f"/download/{os.path.basename(zip_path)}"}
+    return {
+        "success": True,
+        "result_urls": result_urls,
+        "count": len(result_urls)
+    }
 
-@app.get("/download/{filename}")
-def download_file(filename: str):
-    # 使用正确的路径返回文件
-    file_path = f"/tmp/{filename}"
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type='application/zip', filename=filename)
-    else:
-        return {"error": "File not found"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=10000)
+# 静态文件访问接口（用于暴露图片）
+from fastapi.staticfiles import StaticFiles
+app.mount("/files", StaticFiles(directory="/tmp", html=True), name="files")
