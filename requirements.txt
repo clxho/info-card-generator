@@ -1,0 +1,6 @@
+fastapi
+pandas
+pillow
+openpyxl
+requests
+uvicorn
